@@ -1,16 +1,19 @@
 pipeline {
   agent any
-
-  tools { nodejs 'node20' }   // ✅ Node ortamını tüm pipeline’a uygula
-
+  
+  tools { nodejs 'node20' }
+  
+  triggers {
+    pollSCM('H/2 * * * *')
+  }
+  
   environment {
     GITHUB_CREDENTIALS = 'github-pat'
     GITHUB_USER = 'busra-ertekin'
-    BUILD_REPO = "https://github.com/${env.GITHUB_USER}/jenkins-builds.git"
+    BUILD_REPO = "jenkins-builds"
     REPO_NAME = "jenkins-demo-project"
-    PROJECT_PATH = "/Users/nazli/projeler/jenkins-demo-project"
   }
-
+  
   stages {
     stage('Checkout') {
       steps {
@@ -23,62 +26,111 @@ pipeline {
         ])
       }
     }
-
+    
     stage('Install dependencies') {
       steps {
-        dir("${PROJECT_PATH}") {
-          sh 'node -v'
-          sh 'npm ci'
-        }
+        sh '''
+          echo "Current directory: $(pwd)"
+          node -v
+          npm ci
+        '''
       }
     }
-
+    
     stage('Bump version & tag') {
       steps {
-        dir("${PROJECT_PATH}") {
+        withCredentials([usernamePassword(
+          credentialsId: env.GITHUB_CREDENTIALS,
+          usernameVariable: 'GIT_USER',
+          passwordVariable: 'GIT_TOKEN'
+        )]) {
           sh '''
-            git config user.email "jenkins@${GITHUB_USER}"
+            # Git durumunu kontrol et
+            echo "Git status before bump:"
+            git status
+            
+            # Git yapılandırması
+            git config user.email "jenkins@busra-ertekin.com"
             git config user.name "jenkins-ci"
+            
+            # Remote URL'i token ile ayarla
+            git remote set-url origin https://${GIT_TOKEN}@github.com/${GITHUB_USER}/${REPO_NAME}.git
+            
+            # Version bump
             npm version patch -m "ci: bump version to %s [ci skip]"
-            git push origin --tags
-            git push origin HEAD:main
+            
+            # Push
+            git push origin HEAD:main --follow-tags
           '''
         }
       }
     }
-
+    
     stage('Docker build') {
       steps {
-        dir("${PROJECT_PATH}") {
+        sh '''
+          IMAGE_TAG="${GITHUB_USER}/${REPO_NAME}:$(git rev-parse --short HEAD)"
+          echo "Building Docker image: $IMAGE_TAG"
+          docker build -t $IMAGE_TAG .
+        '''
+      }
+    }
+    
+    stage('Build tar and push to jenkins-builds') {
+      steps {
+        withCredentials([usernamePassword(
+          credentialsId: env.GITHUB_CREDENTIALS,
+          usernameVariable: 'GIT_USER',
+          passwordVariable: 'GIT_TOKEN'
+        )]) {
           sh '''
-            IMAGE_TAG="${GITHUB_USER}/${REPO_NAME}:$(git rev-parse --short HEAD)"
-            docker build -t $IMAGE_TAG .
+            # Değişkenler
+            sha=$(git rev-parse --short HEAD)
+            artifact="artifact-${sha}.tar.gz"
+            
+            echo "Creating artifact: $artifact"
+            
+            # Tar oluştur
+            tar -czf ${artifact} .next package.json package-lock.json
+            
+            # Geçici dizin
+            TMPDIR=$(mktemp -d)
+            echo "Temp directory: $TMPDIR"
+            
+            # jenkins-builds reposunu klonla
+            git clone https://${GIT_TOKEN}@github.com/${GITHUB_USER}/${BUILD_REPO}.git $TMPDIR
+            
+            # Artifact'ı kopyala
+            cp ${artifact} $TMPDIR/
+            
+            # jenkins-builds'e push
+            cd $TMPDIR
+            git config user.email "jenkins@busra-ertekin.com"
+            git config user.name "jenkins-ci"
+            git add ${artifact}
+            git commit -m "Add build artifact ${artifact} from ${REPO_NAME}" || echo "No changes to commit"
+            git push origin HEAD:main
+            
+            # Temizlik
+            cd -
+            rm -rf $TMPDIR
+            
+            echo "Artifact pushed successfully!"
           '''
         }
       }
     }
-
-    stage('Build tar and push to jenkins-builds') {
-      steps {
-        dir("${PROJECT_PATH}") {
-          withCredentials([usernamePassword(credentialsId: env.GITHUB_CREDENTIALS, usernameVariable: 'GIT_USER', passwordVariable: 'GIT_TOKEN')]) {
-            sh '''
-              sha=$(git rev-parse --short HEAD)
-              artifact="artifact-${sha}.tar.gz"
-              tar -czf ${artifact} .next package.json
-              TMPDIR=$(mktemp -d)
-              git clone https://${GIT_USER}:${GIT_TOKEN}@github.com/${GIT_USER}/jenkins-builds.git $TMPDIR
-              cp ${artifact} $TMPDIR/
-              cd $TMPDIR
-              git config user.email "jenkins@${GIT_USER}"
-              git config user.name "jenkins-ci"
-              git add ${artifact}
-              git commit -m "Add build artifact ${artifact}" || true
-              git push origin HEAD:main
-            '''
-          }
-        }
-      }
+  }
+  
+  post {
+    always {
+      cleanWs()
+    }
+    success {
+      echo '✅ Pipeline completed successfully!'
+    }
+    failure {
+      echo '❌ Pipeline failed!'
     }
   }
 }
