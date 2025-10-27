@@ -1,6 +1,8 @@
 pipeline {
   agent any
 
+  tools { nodejs 'node20' }   // ✅ Node ortamını tüm pipeline’a uygula
+
   environment {
     GITHUB_CREDENTIALS = 'github-pat'
     GITHUB_USER = 'busra-ertekin'
@@ -22,12 +24,11 @@ pipeline {
     }
 
     stage('Install dependencies') {
-  tools { nodejs 'node20' }
-  steps {
-    sh 'node -v'
-    sh 'npm ci'
-  }
-}
+      steps {
+        sh 'node -v'
+        sh 'npm ci'
+      }
+    }
 
     stage('Bump version & tag') {
       steps {
