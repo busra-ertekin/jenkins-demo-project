@@ -22,10 +22,12 @@ pipeline {
     }
 
     stage('Install dependencies') {
-      steps {
-        sh 'npm ci'
-      }
-    }
+  tools { nodejs 'node20' }
+  steps {
+    sh 'node -v'
+    sh 'npm ci'
+  }
+}
 
     stage('Bump version & tag') {
       steps {
