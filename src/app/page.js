@@ -80,7 +80,7 @@ export default function Home() {
 
           <div className="bg-white rounded-xl shadow-lg p-8">
             <h2 className="text-2xl font-bold text-gray-800 mb-6">
-              ✅ Yapılacaklar Listesi
+              ✅ Yapılacaklar Listesiii
             </h2>
             
             <div className="flex gap-2 mb-6">
