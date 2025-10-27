@@ -8,7 +8,7 @@ pipeline {
     GITHUB_USER = 'busra-ertekin'
     BUILD_REPO = "https://github.com/${env.GITHUB_USER}/jenkins-builds.git"
     REPO_NAME = "jenkins-demo-project"
-    PROJECT_PATH = "/projeler/jenkins-demo-project"
+    PROJECT_PATH = "/Users/nazli/projeler/jenkins-demo-project"
   }
 
   stages {
