@@ -1,15 +1,15 @@
 pipeline {
   agent any
-
+  
   tools { nodejs 'node20' }
-
+  
   environment {
     GITHUB_CREDENTIALS = 'github-pat'
     GITHUB_USER = 'busra-ertekin'
     BUILD_REPO = "jenkins-builds"
     REPO_NAME = "jenkins-demo-project"
   }
-
+  
   stages {
     stage('Checkout') {
       steps {
@@ -22,17 +22,18 @@ pipeline {
         ])
       }
     }
-
+    
     stage('Install dependencies') {
       steps {
         sh '''
+          echo "Installing dependencies..."
           node -v
           npm ci
         '''
       }
     }
-
-    stage('Bump version & push updates') {
+    
+    stage('Bump version in source repo') {
       steps {
         withCredentials([usernamePassword(
           credentialsId: env.GITHUB_CREDENTIALS,
@@ -41,25 +42,32 @@ pipeline {
         )]) {
           sh '''
             set -e
+            
+            echo "Configuring git..."
             git config user.email "jenkins@busra-ertekin.com"
             git config user.name "jenkins-ci"
-
+            
             git remote set-url origin https://${GIT_TOKEN}@github.com/${GITHUB_USER}/${REPO_NAME}.git
-            git fetch --tags
-
+            
+            # Mevcut version
             CURRENT_VERSION=$(node -p "require('./package.json').version")
             echo "Current version: ${CURRENT_VERSION}"
-
+            
+            # Version bump (sadece package.json değişir)
             npm version patch -m "ci: bump version to %s [ci skip]" --force
+            
             NEW_VERSION=$(node -p "require('./package.json').version")
-
-            git push origin HEAD:main --follow-tags
-            echo "✅ Source updated and version bumped to ${NEW_VERSION}"
+            echo "New version: ${NEW_VERSION}"
+            
+            # Push to jenkins-demo-project (sadece package.json ve tag)
+            git push origin HEAD:main --follow-tags --force
+            
+            echo "✅ Version bumped to ${NEW_VERSION} in source repo"
           '''
         }
       }
     }
-
+    
     stage('Build Application') {
       steps {
         sh '''
@@ -69,8 +77,8 @@ pipeline {
         '''
       }
     }
-
-    stage('Package and Push Build Artifacts') {
+    
+    stage('Push Build to jenkins-builds repo') {
       steps {
         withCredentials([usernamePassword(
           credentialsId: env.GITHUB_CREDENTIALS,
@@ -79,73 +87,144 @@ pipeline {
         )]) {
           sh '''
             set -e
-
+            
+            # Build bilgilerini al
             BUILD_DATE=$(date +"%Y-%m-%d_%H-%M-%S")
-            VERSION=$(node -p "require('./package.json').version")
             COMMIT_SHA=$(git rev-parse --short HEAD)
-            BUILD_FOLDER="build-v${VERSION}-${BUILD_DATE}"
-
-            echo "Creating build folder: ${BUILD_FOLDER}"
-            mkdir -p ${BUILD_FOLDER}
-
-            # Sadece build output ve gerekli dosyaları kopyala
-            cp -r .next ${BUILD_FOLDER}/
-            cp package*.json ${BUILD_FOLDER}/
-            cp -r public ${BUILD_FOLDER}/ || true
-
-            # Tar oluştur
+            VERSION=$(node -p "require('./package.json').version")
+            
+            # Klasör ve tar isimleri
+            BUILD_FOLDER="jenkins-demo-project-v${VERSION}-${BUILD_DATE}"
             TAR_FILE="${BUILD_FOLDER}.tar.gz"
+            
+            echo "================================================"
+            echo "Creating build artifacts"
+            echo "Version: v${VERSION}"
+            echo "Date: ${BUILD_DATE}"
+            echo "Commit: ${COMMIT_SHA}"
+            echo "================================================"
+            
+            # 1. Build klasörünü oluştur
+            mkdir -p ${BUILD_FOLDER}
+            
+            # Tüm projeyi kopyala (node_modules ve .git hariç)
+            rsync -av \
+              --exclude='node_modules' \
+              --exclude='.git' \
+              --exclude='.next/cache' \
+              --exclude="${BUILD_FOLDER}" \
+              --exclude='*.tar.gz' \
+              . ${BUILD_FOLDER}/
+            
+            echo "Build folder created: ${BUILD_FOLDER}"
+            
+            # 2. Tar dosyası oluştur
             tar -czf ${TAR_FILE} ${BUILD_FOLDER}
-
-            # Jenkins-builds reposuna gönder
+            
+            echo "Tar file created: ${TAR_FILE} ($(du -h ${TAR_FILE} | cut -f1))"
+            
+            # 3. jenkins-builds reposunu klonla
             TMPDIR=$(mktemp -d)
+            echo "Cloning jenkins-builds repository..."
             git clone https://${GIT_TOKEN}@github.com/${GITHUB_USER}/${BUILD_REPO}.git $TMPDIR
-
+            
+            # 4. Build klasörünü ve tar'ı taşı
+            mv ${BUILD_FOLDER} $TMPDIR/
+            mv ${TAR_FILE} $TMPDIR/
+            
+            # 5. jenkins-builds reposuna commit ve push
             cd $TMPDIR
+            
             git config user.email "jenkins@busra-ertekin.com"
             git config user.name "jenkins-ci"
-
-            mv ${WORKSPACE}/${BUILD_FOLDER} .
-            mv ${WORKSPACE}/${TAR_FILE} .
-
+            
             git add ${BUILD_FOLDER} ${TAR_FILE}
-            git commit -m "Build: v${VERSION} (${BUILD_DATE}) [${COMMIT_SHA}]"
-            git push origin HEAD:main
+            
+            COMMIT_MSG="Build v${VERSION} - ${BUILD_DATE}
 
-            echo "✅ Build folder and tar pushed to ${BUILD_REPO}"
+Project: ${REPO_NAME}
+Version: v${VERSION}
+Build Date: ${BUILD_DATE}
+Commit: ${COMMIT_SHA}
+Build Number: #${BUILD_NUMBER}
+
+Files added:
+- ${BUILD_FOLDER}/ (full project with build)
+- ${TAR_FILE} (compressed backup)
+
+Usage:
+  cd ${BUILD_FOLDER}
+  npm ci
+  npm run dev"
+            
+            git commit -m "${COMMIT_MSG}"
+            
+            echo "Pushing to jenkins-builds repository..."
+            git push origin HEAD:main
+            
+            # Temizlik
+            cd -
+            rm -rf $TMPDIR
+            
+            echo "================================================"
+            echo "✅ SUCCESS!"
+            echo ""
+            echo "Source repo (jenkins-demo-project):"
+            echo "  - Version updated to v${VERSION}"
+            echo "  - Git tag: v${VERSION}"
+            echo ""
+            echo "Build repo (jenkins-builds):"
+            echo "  - Folder: ${BUILD_FOLDER}/"
+            echo "  - Tar: ${TAR_FILE}"
+            echo ""
+            echo "Links:"
+            echo "  Source: https://github.com/${GITHUB_USER}/${REPO_NAME}"
+            echo "  Builds: https://github.com/${GITHUB_USER}/${BUILD_REPO}"
+            echo "================================================"
           '''
         }
       }
     }
-
-    stage('Build Summary') {
-      steps {
-        sh '''
-          BUILD_DATE=$(date +"%Y-%m-%d %H:%M:%S")
-          VERSION=$(node -p "require('./package.json').version")
-          COMMIT_SHA=$(git rev-parse --short HEAD)
-
-          echo "========================================"
-          echo "📦 Project:  ${REPO_NAME}"
-          echo "🏷️  Version:  v${VERSION}"
-          echo "📅 Date:      ${BUILD_DATE}"
-          echo "🔖 Commit:    ${COMMIT_SHA}"
-          echo "📍 Builds:    https://github.com/${GITHUB_USER}/${BUILD_REPO}"
-          echo "========================================"
-        '''
-      }
-    }
   }
-
+  
   post {
     success {
-      echo '✅ BUILD SUCCESS'
+      echo '✅ PIPELINE SUCCESS'
     }
     failure {
-      echo '❌ BUILD FAILED'
+      echo '❌ PIPELINE FAILED'
     }
     always {
       cleanWs()
     }
   }
 }
+```
+
+## 📂 SONUÇ YAPISI
+
+### jenkins-demo-project reposu:
+```
+jenkins-demo-project/
+├── src/
+├── public/
+├── package.json        (version: 0.1.35) ✅
+├── Jenkinsfile
+├── next.config.js
+└── ...
+
+NOT: .next/ klasörü YOK, build dosyaları YOK
+```
+
+### jenkins-builds reposu:
+```
+jenkins-builds/
+├── jenkins-demo-project-v0.1.34-2025-10-27_16-30-45/
+│   ├── src/
+│   ├── .next/          ✅ BUILD BURADA
+│   ├── package.json
+│   └── ...
+├── jenkins-demo-project-v0.1.34-2025-10-27_16-30-45.tar.gz  ✅ TAR BURADA
+├── jenkins-demo-project-v0.1.35-2025-10-27_17-15-20/
+├── jenkins-demo-project-v0.1.35-2025-10-27_17-15-20.tar.gz
+└── README.md
