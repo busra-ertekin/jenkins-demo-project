@@ -5,6 +5,10 @@ pipeline {
     nodejs 'node20'
   }
 
+  triggers {
+    githubPush()
+  }
+
   environment {
     GITHUB_CREDENTIALS = 'github-pat'
     GITHUB_USER = 'busra-ertekin'
@@ -13,6 +17,26 @@ pipeline {
   }
 
   stages {
+    stage('Check Commit Author') {
+      steps {
+        script {
+          echo "🔍 Checking last commit author and message..."
+          def author = sh(script: "git log -1 --pretty=%an", returnStdout: true).trim()
+          def message = sh(script: "git log -1 --pretty=%B", returnStdout: true).trim()
+
+          echo "🧾 Author: ${author}"
+          echo "🗒️ Message: ${message}"
+
+          // Jenkins'in kendi commitlerini veya [ci skip] etiketli commitleri atla
+          if (author == "jenkins-ci" || message.contains("[ci skip]")) {
+            echo "🛑 This commit was made by Jenkins or contains [ci skip]. Skipping build."
+            currentBuild.result = 'SUCCESS'
+            error("Skipping build to avoid infinite loop.")
+          }
+        }
+      }
+    }
+
     stage('Checkout') {
       steps {
         checkout([
