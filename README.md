@@ -38,3 +38,4 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 Test Cloudflare Webhook Trigger 🚀
 Test Cloudflare Webhook Trigger 2 🚀
 🧪 Test commit to verify Jenkins skip filter
+🧩 Third test commit — verify Jenkins build trigger only once
