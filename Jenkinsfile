@@ -30,14 +30,15 @@ pipeline {
     stage('Prevent CI Loop') {
       steps {
         script {
-          def lastAuthor = sh(script: "git log -1 --pretty='%ae'", returnStdout: true).trim()
-          def lastMessage = sh(script: "git log -1 --pretty=%B", returnStdout: true).trim()
+          def lastAuthorEmail = sh(script: "git log -1 --pretty='%ae'", returnStdout: true).trim()
 
-          if (lastAuthor.contains("jenkins") || lastMessage.contains("[ci skip]") || lastMessage.contains("[ci-skip]")) {
-            echo "🚫 Jenkins internal commit detected — skipping build"
+          if (lastAuthorEmail.contains("jenkins@")) {
+            echo "🚫 Jenkins internal commit — skipping build"
             currentBuild.result = 'SUCCESS'
             error("Skipping to prevent CI loop")
           }
+
+          echo "✅ Human commit detected, continuing pipeline"
         }
       }
     }
@@ -45,14 +46,13 @@ pipeline {
     stage('Install dependencies') {
       steps {
         sh '''
-          echo "Installing dependencies..."
           node -v
           npm ci
         '''
       }
     }
 
-    stage('Bump version in source repo') {
+    stage('Bump version') {
       steps {
         withCredentials([usernamePassword(
           credentialsId: env.GITHUB_CREDENTIALS,
@@ -66,27 +66,22 @@ pipeline {
 
             git remote set-url origin https://${GIT_TOKEN}@github.com/${GITHUB_USER}/${REPO_NAME}.git
 
-            CURRENT_VERSION=$(node -p "require('./package.json').version")
-            npm version patch -m "ci: bump version to %s [ci skip]" --force
-            NEW_VERSION=$(node -p "require('./package.json').version")
-
+            npm version patch -m "ci: bump version to %s" --force
             git push origin HEAD:main --follow-tags --force
-            echo "✅ Version bumped to ${NEW_VERSION}"
           '''
         }
       }
     }
 
-    stage('Build Application') {
+    stage('Build App') {
       steps {
         sh '''
           npm run build
-          echo "✅ Build complete"
         '''
       }
     }
 
-    stage('Push Build to jenkins-builds repo') {
+    stage('Push Build') {
       steps {
         withCredentials([usernamePassword(
           credentialsId: env.GITHUB_CREDENTIALS,
@@ -95,30 +90,26 @@ pipeline {
         )]) {
           sh '''
             set -e
-            BUILD_DATE=$(date +"%Y-%m-%d_%H-%M-%S")
-            COMMIT_SHA=$(git rev-parse --short HEAD)
             VERSION=$(node -p "require('./package.json').version")
+            DATE=$(date +"%Y-%m-%d_%H-%M-%S")
 
-            BUILD_FOLDER="jenkins-demo-project-v${VERSION}-${BUILD_DATE}"
-            TAR_FILE="${BUILD_FOLDER}.tar.gz"
+            FOLDER="jenkins-demo-project-v${VERSION}-${DATE}"
+            TAR="${FOLDER}.tar.gz"
 
-            mkdir -p ${BUILD_FOLDER}
-            rsync -av --exclude='node_modules' --exclude='.git' --exclude='.next/cache' . ${BUILD_FOLDER}/
+            mkdir $FOLDER
+            rsync -av --exclude=node_modules --exclude=.git . $FOLDER/
+            tar -czf $TAR $FOLDER
 
-            tar -czf ${TAR_FILE} ${BUILD_FOLDER}
+            TMP=$(mktemp -d)
+            git clone https://${GIT_TOKEN}@github.com/${GITHUB_USER}/${BUILD_REPO}.git $TMP
+            mv $FOLDER $TAR $TMP/
 
-            TMPDIR=$(mktemp -d)
-            git clone https://${GIT_TOKEN}@github.com/${GITHUB_USER}/${BUILD_REPO}.git $TMPDIR
-
-            mv ${BUILD_FOLDER} ${TAR_FILE} $TMPDIR/
-            cd $TMPDIR
-
+            cd $TMP
             git config user.email "jenkins@busra-ertekin.com"
             git config user.name "jenkins-ci"
             git add .
-            git commit -m "build: v${VERSION} - ${BUILD_DATE}"
-            git push origin HEAD:main
-            echo "✅ Build pushed"
+            git commit -m "build: ${VERSION}"
+            git push origin main
           '''
         }
       }
@@ -126,8 +117,8 @@ pipeline {
   }
 
   post {
-    success { echo '✅ PIPELINE SUCCESS' }
-    failure { echo '❌ PIPELINE FAILED' }
+    success { echo '✅ SUCCESS' }
+    failure { echo '❌ FAILED' }
     always { cleanWs() }
   }
 }
