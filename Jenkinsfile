@@ -5,10 +5,6 @@ pipeline {
     nodejs 'node20'
   }
 
-  triggers {
-    githubPush()
-  }
-
   environment {
     GITHUB_CREDENTIALS = 'github-pat'
     GITHUB_USER = 'busra-ertekin'
