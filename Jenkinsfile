@@ -13,6 +13,7 @@ pipeline {
   }
 
   stages {
+
     stage('Checkout') {
       steps {
         checkout([
@@ -23,6 +24,21 @@ pipeline {
             credentialsId: env.GITHUB_CREDENTIALS
           ]]
         ])
+      }
+    }
+
+    stage('Prevent CI Loop') {
+      steps {
+        script {
+          def author = sh(script: "git log -1 --pretty=%an", returnStdout: true).trim()
+          def message = sh(script: "git log -1 --pretty=%B", returnStdout: true).trim()
+
+          if (author == "jenkins-ci" || message.contains("[ci skip]")) {
+            echo "🚫 Jenkins commit detected — skipping build"
+            currentBuild.result = 'SUCCESS'
+            error("Stopping to avoid CI loop")
+          }
+        }
       }
     }
 
@@ -45,7 +61,6 @@ pipeline {
         )]) {
           sh '''
             set -e
-            echo "Configuring git..."
             git config user.email "jenkins@busra-ertekin.com"
             git config user.name "jenkins-ci"
 
@@ -60,7 +75,6 @@ pipeline {
             echo "New version: ${NEW_VERSION}"
 
             git push origin HEAD:main --follow-tags --force
-            echo "✅ Version bumped to ${NEW_VERSION} in source repo"
           '''
         }
       }
@@ -92,76 +106,33 @@ pipeline {
             BUILD_FOLDER="jenkins-demo-project-v${VERSION}-${BUILD_DATE}"
             TAR_FILE="${BUILD_FOLDER}.tar.gz"
 
-            echo "================================================"
-            echo "Creating build artifacts"
-            echo "Version: v${VERSION}"
-            echo "Date: ${BUILD_DATE}"
-            echo "Commit: ${COMMIT_SHA}"
-            echo "================================================"
-
             mkdir -p ${BUILD_FOLDER}
 
             rsync -av \
               --exclude='node_modules' \
               --exclude='.git' \
               --exclude='.next/cache' \
-              --exclude='${BUILD_FOLDER}' \
+              --exclude="${BUILD_FOLDER}" \
               --exclude='*.tar.gz' \
               . ${BUILD_FOLDER}/
 
-            echo "Build folder created: ${BUILD_FOLDER}"
-
             tar -czf ${TAR_FILE} ${BUILD_FOLDER}
-            echo "Tar file created: ${TAR_FILE} ($(du -h ${TAR_FILE} | cut -f1))"
 
             TMPDIR=$(mktemp -d)
-            echo "Cloning jenkins-builds repository..."
             git clone https://${GIT_TOKEN}@github.com/${GITHUB_USER}/${BUILD_REPO}.git $TMPDIR
 
             mv ${BUILD_FOLDER} $TMPDIR/
             mv ${TAR_FILE} $TMPDIR/
 
             cd $TMPDIR
-
             git config user.email "jenkins@busra-ertekin.com"
             git config user.name "jenkins-ci"
-
             git add ${BUILD_FOLDER} ${TAR_FILE}
-
-            COMMIT_MSG="Build v${VERSION} - ${BUILD_DATE}
-
-Project: ${REPO_NAME}
-Version: v${VERSION}
-Build Date: ${BUILD_DATE}
-Commit: ${COMMIT_SHA}
-Build Number: #${BUILD_NUMBER}
-
-Files added:
-- ${BUILD_FOLDER}/
-- ${TAR_FILE}"
-
-            git commit -m "${COMMIT_MSG}"
-            echo "Pushing to jenkins-builds repository..."
+            git commit -m "build: v${VERSION} - ${BUILD_DATE}"
             git push origin HEAD:main
 
             cd -
             rm -rf $TMPDIR
-
-            echo "================================================"
-            echo "✅ SUCCESS!"
-            echo ""
-            echo "Source repo (jenkins-demo-project):"
-            echo "  - Version updated to v${VERSION}"
-            echo "  - Git tag: v${VERSION}"
-            echo ""
-            echo "Build repo (jenkins-builds):"
-            echo "  - Folder: ${BUILD_FOLDER}/"
-            echo "  - Tar: ${TAR_FILE}"
-            echo ""
-            echo "Links:"
-            echo "  Source: https://github.com/${GITHUB_USER}/${REPO_NAME}"
-            echo "  Builds: https://github.com/${GITHUB_USER}/${BUILD_REPO}"
-            echo "================================================"
           '''
         }
       }
@@ -169,14 +140,8 @@ Files added:
   }
 
   post {
-    success {
-      echo '✅ PIPELINE SUCCESS'
-    }
-    failure {
-      echo '❌ PIPELINE FAILED'
-    }
-    always {
-      cleanWs()
-    }
+    success { echo '✅ PIPELINE SUCCESS' }
+    failure { echo '❌ PIPELINE FAILED' }
+    always { cleanWs() }
   }
 }
