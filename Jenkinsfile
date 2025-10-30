@@ -18,7 +18,7 @@ pipeline {
       steps {
         checkout([
           $class: 'GitSCM',
-          branches: [[name: '*/main']],
+          branches: [[name: 'main']],
           userRemoteConfigs: [[
             url: "https://github.com/${env.GITHUB_USER}/${env.REPO_NAME}.git",
             credentialsId: env.GITHUB_CREDENTIALS
@@ -30,14 +30,16 @@ pipeline {
     stage('Prevent CI Loop') {
       steps {
         script {
-          def author = sh(script: "git log -1 --pretty=%an", returnStdout: true).trim()
+          def author = sh(script: "git log -1 --pretty='%an <%ae>'", returnStdout: true).trim()
           def message = sh(script: "git log -1 --pretty=%B", returnStdout: true).trim()
 
-          if (author == "jenkins-ci" || message.contains("[ci skip]")) {
+          if (author.contains("jenkins-ci") || message.contains("[ci skip]")) {
             echo "🚫 Jenkins commit detected — skipping build"
             currentBuild.result = 'SUCCESS'
             error("Stopping to avoid CI loop")
           }
+
+          echo "✅ Commit from real developer: ${author}, continuing..."
         }
       }
     }
