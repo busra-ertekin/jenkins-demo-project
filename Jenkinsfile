@@ -679,4 +679,4 @@ EOF
             echo "Pipeline failed..."
         }
     }
-}
+}// trigger commit
