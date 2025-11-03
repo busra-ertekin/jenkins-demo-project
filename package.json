@@ -1,12 +1,10 @@
-
 {
   "name": "jenkins-demo-project",
-  "version": "0.1.214",
+  "version": "0.1.215",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "node version.js && next build && next export",
-
     "start": "next start",
     "lint": "eslint"
   },
