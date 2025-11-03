@@ -1,1 +1,2 @@
 jenkins pipeline test  3 Kas 2025 Pts +03 15:34:37
+// ping  3 Kas 2025 Pts +03 16:30:58
