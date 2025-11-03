@@ -3,14 +3,45 @@ pipeline {
   
   tools { nodejs 'node20' }
   
+  // Poll SCM: Her 5 dakikada bir kontrol et ama [ci skip] varsa ignore et
+  triggers {
+    pollSCM('H/5 * * * *')  // Her 5 dakikada bir kontrol
+  }
+  
   environment {
     GITHUB_CREDENTIALS = 'github-pat'
     GITHUB_USER = 'busra-ertekin'
     BUILD_REPO = "jenkins-builds"
     REPO_NAME = "jenkins-demo-project"
+    SHOULD_BUILD = "true"
   }
   
   stages {
+    stage('Check Commit Message') {
+      steps {
+        script {
+          // Son commit mesajını al
+          def commitMsg = sh(
+            script: 'git log -1 --pretty=%B',
+            returnStdout: true
+          ).trim()
+          
+          echo "Last commit message: ${commitMsg}"
+          
+          // [ci skip] veya [skip ci] varsa build'i atla
+          if (commitMsg =~ /\[(ci skip|skip ci)\]/) {
+            env.SHOULD_BUILD = "false"
+            echo "⏭️  CI SKIP detected - Aborting build"
+            echo "Commit message contains [ci skip] or [skip ci]"
+            currentBuild.result = 'NOT_BUILT'
+            error("Build skipped due to [ci skip] in commit message")
+          }
+          
+          echo "✅ No [ci skip] found - Proceeding with build"
+        }
+      }
+    }
+    
     stage('Checkout') {
       steps {
         checkout([$class: 'GitSCM',
@@ -99,7 +130,19 @@ pipeline {
         sh '''
           echo "Building Next.js application..."
           npm run build
-          echo "✅ Build completed"
+          
+          # next export artık kullanılmıyor, out/ klasörü zaten oluşuyor
+          if [ ! -d "out" ]; then
+            echo "⚠️  out/ folder not found, checking .next/ ..."
+            if [ -d ".next" ]; then
+              echo "✅ Build completed in .next/"
+            else
+              echo "❌ Build folder not found!"
+              exit 1
+            fi
+          else
+            echo "✅ Build completed in out/"
+          fi
         '''
       }
     }
@@ -166,7 +209,7 @@ Build Number: #${BUILD_NUMBER}
 
 Contents:
 - Full source code
-- Build output (.next/)
+- Build output (.next/ or out/)
 - All configuration files
 - package.json & package-lock.json
 
@@ -225,6 +268,11 @@ Note: Run 'npm ci' to install dependencies"
     failure {
       echo '========================================'
       echo '❌ BUILD FAILED'
+      echo '========================================'
+    }
+    aborted {
+      echo '========================================'
+      echo '⏭️  BUILD SKIPPED ([ci skip] found)'
       echo '========================================'
     }
     always {
