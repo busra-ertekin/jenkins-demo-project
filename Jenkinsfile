@@ -3,45 +3,14 @@ pipeline {
   
   tools { nodejs 'node20' }
   
-  // Poll SCM: Her 5 dakikada bir kontrol et ama [ci skip] varsa ignore et
-  triggers {
-    pollSCM('H/5 * * * *')  // Her 5 dakikada bir kontrol
-  }
-  
   environment {
     GITHUB_CREDENTIALS = 'github-pat'
     GITHUB_USER = 'busra-ertekin'
     BUILD_REPO = "jenkins-builds"
     REPO_NAME = "jenkins-demo-project"
-    SHOULD_BUILD = "true"
   }
   
   stages {
-    stage('Check Commit Message') {
-      steps {
-        script {
-          // Son commit mesajını al
-          def commitMsg = sh(
-            script: 'git log -1 --pretty=%B',
-            returnStdout: true
-          ).trim()
-          
-          echo "Last commit message: ${commitMsg}"
-          
-          // [ci skip] veya [skip ci] varsa build'i atla
-          if (commitMsg =~ /\[(ci skip|skip ci)\]/) {
-            env.SHOULD_BUILD = "false"
-            echo "⏭️  CI SKIP detected - Aborting build"
-            echo "Commit message contains [ci skip] or [skip ci]"
-            currentBuild.result = 'NOT_BUILT'
-            error("Build skipped due to [ci skip] in commit message")
-          }
-          
-          echo "✅ No [ci skip] found - Proceeding with build"
-        }
-      }
-    }
-    
     stage('Checkout') {
       steps {
         checkout([$class: 'GitSCM',
@@ -88,33 +57,11 @@ pipeline {
             CURRENT_VERSION=$(node -p "require('./package.json').version")
             echo "Current version: ${CURRENT_VERSION}"
             
-            # Yeni version hesapla
-            IFS='.' read -r -a VERSION_PARTS <<< "$CURRENT_VERSION"
-            MAJOR="${VERSION_PARTS[0]}"
-            MINOR="${VERSION_PARTS[1]}"
-            PATCH="${VERSION_PARTS[2]}"
-            NEW_PATCH=$((PATCH + 1))
-            NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
+            # Yeni version
+            npm version patch -m "ci: bump version to %s [ci skip]" --force
             
-            echo "New version will be: ${NEW_VERSION}"
-            
-            # Tag zaten var mı kontrol et
-            if git rev-parse "v${NEW_VERSION}" >/dev/null 2>&1; then
-              echo "⚠️  Tag v${NEW_VERSION} already exists, deleting it..."
-              git tag -d "v${NEW_VERSION}" || true
-              git push origin ":refs/tags/v${NEW_VERSION}" || true
-              sleep 2
-            fi
-            
-            # package.json'u güncelle
-            npm version ${NEW_VERSION} --no-git-tag-version --allow-same-version
-            
-            # Değişiklikleri commit et
-            git add package.json package-lock.json
-            git commit -m "ci: bump version to ${NEW_VERSION} [ci skip]" || echo "No changes to commit"
-            
-            # Tag oluştur
-            git tag -a "v${NEW_VERSION}" -m "Release v${NEW_VERSION}"
+            NEW_VERSION=$(node -p "require('./package.json').version")
+            echo "New version: ${NEW_VERSION}"
             
             # Push version and tags
             git push origin HEAD:main --follow-tags --force
@@ -130,19 +77,7 @@ pipeline {
         sh '''
           echo "Building Next.js application..."
           npm run build
-          
-          # next export artık kullanılmıyor, out/ klasörü zaten oluşuyor
-          if [ ! -d "out" ]; then
-            echo "⚠️  out/ folder not found, checking .next/ ..."
-            if [ -d ".next" ]; then
-              echo "✅ Build completed in .next/"
-            else
-              echo "❌ Build folder not found!"
-              exit 1
-            fi
-          else
-            echo "✅ Build completed in out/"
-          fi
+          echo "✅ Build completed"
         '''
       }
     }
@@ -209,7 +144,7 @@ Build Number: #${BUILD_NUMBER}
 
 Contents:
 - Full source code
-- Build output (.next/ or out/)
+- Build output (.next/)
 - All configuration files
 - package.json & package-lock.json
 
@@ -268,11 +203,6 @@ Note: Run 'npm ci' to install dependencies"
     failure {
       echo '========================================'
       echo '❌ BUILD FAILED'
-      echo '========================================'
-    }
-    aborted {
-      echo '========================================'
-      echo '⏭️  BUILD SKIPPED ([ci skip] found)'
       echo '========================================'
     }
     always {
